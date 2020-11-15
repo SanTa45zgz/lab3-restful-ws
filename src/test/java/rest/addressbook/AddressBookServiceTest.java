@@ -1,6 +1,7 @@
 package rest.addressbook;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertNotEquals;
 
 
 import java.io.IOException;
@@ -52,6 +53,18 @@ public class AddressBookServiceTest {
     // Verify that GET /contacts is well implemented by the service, i.e
     // complete the test to ensure that it is safe and idempotent
     //////////////////////////////////////////////////////////////////////
+
+    // Verifying that it is safe (SAME SERVER STATE)
+
+    assertEquals(0, ab.getPersonList().size());
+
+    // Verifying that it is idempotent (SAME RESULT WITH CONSECUTIVE REQUESTS)
+    response = client.target("http://localhost:8282/contacts")
+            .request().get();
+    assertEquals(200, response.getStatus());
+    assertEquals(0, response.readEntity(AddressBook.class).getPersonList()
+            .size());
+
   }
 
   @Test
@@ -93,6 +106,25 @@ public class AddressBookServiceTest {
     // Verify that POST /contacts is well implemented by the service, i.e
     // complete the test to ensure that it is not safe and not idempotent
     //////////////////////////////////////////////////////////////////////
+
+    // Verifying that it is not safe (NOT THE SAME SERVER STATE -> ab.size must be 1)
+
+    assertEquals(1, ab.getPersonList().size());
+
+    // Verifying that it is idempotent (NOT THE SAME RESULT WITH THE SAME CONSECUTIVE REQUESTS)
+
+    Response response2 = client.target("http://localhost:8282/contacts")
+            .request(MediaType.APPLICATION_JSON)
+            .post(Entity.entity(juan, MediaType.APPLICATION_JSON));
+    Person juan2 = response2.readEntity(Person.class);
+
+
+    // Comparing ids from juanUpdated (response1) and Entity from response2
+    assertNotEquals(juanUpdated.getId(), juan2.getId());
+    assertEquals(1,juanUpdated.getId());
+    assertEquals(2,juan2.getId());
+
+
 
   }
 
@@ -149,6 +181,21 @@ public class AddressBookServiceTest {
     // complete the test to ensure that it is safe and idempotent
     //////////////////////////////////////////////////////////////////////
 
+    // Verifying that it is safe (SAME SERVER STATE) -> SIZE MUST BE 3 after the get request
+
+    assertEquals(3, ab.getPersonList().size());
+
+    // Verifying that it is idempotent (SAME RESULT WITH CONSECUTIVE REQUESTS)
+    response = client.target("http://localhost:8282/contacts/person/3")
+            .request(MediaType.APPLICATION_JSON).get();
+    assertEquals(200, response.getStatus());
+    assertEquals(MediaType.APPLICATION_JSON_TYPE, response.getMediaType());
+    mariaUpdated = response.readEntity(Person.class);
+    assertEquals(maria.getName(), mariaUpdated.getName());
+    assertEquals(3, mariaUpdated.getId());
+    assertEquals(mariaURI, mariaUpdated.getHref());
+
+
   }
 
   @Test
@@ -181,6 +228,21 @@ public class AddressBookServiceTest {
     // complete the test to ensure that it is safe and idempotent
     //////////////////////////////////////////////////////////////////////
 
+    // Verifying that it is safe (SAME SERVER STATE) -> SIZE MUST BE 2 after the get request
+
+    assertEquals(2, ab.getPersonList().size());
+    assertEquals(ab.getPersonList().get(1).getName(), juan.getName());
+
+    // Verifying that it is idempotent (SAME RESULT WITH CONSECUTIVE REQUESTS)
+    response = client.target("http://localhost:8282/contacts")
+            .request(MediaType.APPLICATION_JSON).get();
+    assertEquals(200, response.getStatus());
+    assertEquals(MediaType.APPLICATION_JSON_TYPE, response.getMediaType());
+    AddressBook addressBookRetrieved2 = response
+            .readEntity(AddressBook.class);
+    assertEquals(2, addressBookRetrieved2.getPersonList().size());
+    assertEquals(juan.getName(), addressBookRetrieved2.getPersonList()
+            .get(1).getName());
   }
 
   @Test
@@ -234,11 +296,30 @@ public class AddressBookServiceTest {
     // complete the test to ensure that it is idempotent but not safe
     //////////////////////////////////////////////////////////////////////
 
+    // Verifying that it is not safe (NOT THE SAME SERVER STATE) -> 2nd Person HAD TO BE UPDATED
+    // HER NAME MUST BE Maria
+    assertEquals(ab.getPersonList().get(1).getName(),maria.getName());
+
+    // Verifying that it is idempotent (SAME RESULT WITH CONSECUTIVE REQUESTS)
+    //juanUpdated (Response Entity 1) must be equal to mariaUpdated (Response Entity 2)
+    Response response2 = client
+            .target("http://localhost:8282/contacts/person/2")
+            .request(MediaType.APPLICATION_JSON)
+            .put(Entity.entity(maria, MediaType.APPLICATION_JSON));
+    assertEquals(200, response2.getStatus());
+    assertEquals(MediaType.APPLICATION_JSON_TYPE, response2.getMediaType());
+    Person mariaUpdated = response2.readEntity(Person.class);
+    assertEquals(juanUpdated.getName(), mariaUpdated.getName());
+    assertEquals(2, mariaUpdated.getId());
+    assertEquals(juanURI, mariaUpdated.getHref());
+
+
   }
 
   @Test
   public void deleteUsers() throws IOException {
     // Prepare server
+
     AddressBook ab = new AddressBook();
     Person salvador = new Person();
     salvador.setName("Salvador");
@@ -258,6 +339,29 @@ public class AddressBookServiceTest {
     assertEquals(204, response.getStatus());
 
     // Verify that the user has been deleted
+
+    /*
+    *********************************************************************************
+    * IN THIS DELETE IT IS BEING CHECKED IF THIS METHOD IS IDEMPOTENT
+    * THE SAME DELETE CALL IS RETURNING 404 STATUS INSTEAD OF 204 AGAIN!!!!!!!!!!!
+    *
+    * SO NOW WE HAVE TO THINK IF THIS RESPONSE STATUS CODE 404 NOT FOUND IS APPROPRIATE
+    * OR NOT BECAUSE IN CASE THIS STATUS CODE IS FINE, WE ARE NOT ACCOMPLISHING REST SEMANTICS
+    * THAT DELETE OPERATION IS IDEMPOTENT
+    *
+    * QUOTING TO LEE DAVIS IN THIS ARTICLE: https://leedavis81.github.io/is-a-http-delete-requests-idempotent/
+    * "If a race condition was hit and somebody else deleted a resource before you do
+    * you think it's fair to determine that a client error has occurred? I don't think so.
+    * It's still a perfectly valid request, which is why I believe neither of these status
+    * codes (referred to 4xx Status Codes) is appropriate for what
+    * is essentially a successful idempotent request. In my opinion 2xx are a far better option."
+    *
+    * ACCORDING TO THIS, IT SHOULD BE BETTER TO RESPOND WITH 204 NO CONTENT ANYWAYS TO AVOID
+    * PROBLEMS WHEN IDENTICAL CONCURRENT REQUESTS ARE BEING PERFORMED AND ALSO WE WILL BE
+    * ACCOMPLISHING REST SEMANTICS.
+    *
+    *********************************************************************************
+    */
     response = client.target("http://localhost:8282/contacts/person/2")
       .request().delete();
     assertEquals(404, response.getStatus());
@@ -266,6 +370,17 @@ public class AddressBookServiceTest {
     // Verify that DELETE /contacts/person/2 is well implemented by the service, i.e
     // complete the test to ensure that it is idempotent but not safe
     //////////////////////////////////////////////////////////////////////
+
+    // Verifying that it is not safe (NOT THE SAME SERVER STATE) -> SIZE MUST BE 1
+    assertEquals(1, ab.getPersonList().size());
+    response = client.target("http://localhost:8282/contacts")
+            .request(MediaType.APPLICATION_JSON).get();
+    AddressBook abRetrieved = response.readEntity(AddressBook.class);
+
+
+
+
+
 
   }
 
